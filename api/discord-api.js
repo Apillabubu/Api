@@ -1,150 +1,211 @@
 import crypto from "crypto"
 
-const a = process.env.discord_webhook
-const b = process.env.api_key
+const a = process.env.api_secret
 
-const c = new Map()
-const d = new Map()
-const e = new Set()
+const b = process.env.webhook_exec
+const c = process.env.webhook_abuse
+const d = process.env.webhook_invalid
+const e = process.env.webhook_error
 
-function f(){
+const f = new Map() 
+const g = new Map() 
+const h = new Map() 
+const i = new Map() 
+const j = new Set() 
+
+function k(l){
+    return crypto.createHash("sha256").update(l).digest("hex")
+}
+
+function m(){
     return new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})
 }
 
-async function g(h){
-    await fetch(a,{
+async function n(o,p){
+    await fetch(o,{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(h)
+        body:JSON.stringify(p)
     })
 }
 
-export default async function handler(i,j){
+export default async function handler(q,r){
 
-    const k = i.headers["x-forwarded-for"] || i.socket.remoteAddress
-    const l = Date.now()
-
-    if(e.has(k)){
-        return j.status(403).end()
+    if(q.method !== "POST"){
+        return r.status(405).end()
     }
 
-    if(i.method !== "POST"){
-        await g({
+    const s = q.headers["x-forwarded-for"] || q.socket.remoteAddress
+    const t = Date.now()
+
+    if(j.has(s)){
+        return r.status(403).end()
+    }
+
+    const {
+        username:u,
+        userId:v,
+        experience:w,
+        timestamp:x,
+        nonce:y,
+        signature:z
+    } = q.body || {}
+
+    if(!u || !v || !w || !x || !y || !z){
+
+        await n(d,{
             embeds:[{
-                title:"requisicao invalida",
+                title:"request invalido",
                 fields:[
-                    {name:"motivo",value:"metodo invalido"},
-                    {name:"ip",value:String(k)},
-                    {name:"horario",value:f()}
+                    {name:"ip",value:String(s)},
+                    {name:"horario",value:m()}
                 ]
             }]
         })
-        return j.status(405).end()
+
+        return r.status(400).end()
     }
 
-    const m = c.get(k)
+    if(Math.abs(t - x) > 10000){
 
-    if(m && l - m < 5000){
+        await n(d,{
+            embeds:[{
+                title:"request expirado",
+                fields:[
+                    {name:"ip",value:String(s)},
+                    {name:"horario",value:m()}
+                ]
+            }]
+        })
 
-        if(!d.has(k)) d.set(k,0)
-        d.set(k,d.get(k)+1)
+        return r.status(403).end()
+    }
 
-        if(d.get(k) > 5){
-            e.add(k)
+    if(f.has(y)){
+        return r.status(403).end()
+    }
 
-            await g({
+    f.set(y,true)
+
+    const aa = k(`${u}:${v}:${w}:${x}:${y}:${a}`)
+
+    if(aa !== z){
+
+        await n(d,{
+            embeds:[{
+                title:"assinatura invalida",
+                fields:[
+                    {name:"ip",value:String(s)},
+                    {name:"horario",value:m()}
+                ]
+            }]
+        })
+
+        return r.status(403).end()
+    }
+
+    const ab = g.get(s)
+
+    if(ab && t - ab < 3000){
+
+        let ac = i.get(s) || 0
+        ac++
+
+        i.set(s,ac)
+
+        if(ac % 10 === 0){
+
+            await n(c,{
                 embeds:[{
-                    title:"ip bloqueado",
+                    title:"abuse detectado",
                     fields:[
-                        {name:"ip",value:String(k)},
-                        {name:"motivo",value:"spam"},
-                        {name:"horario",value:f()}
+                        {name:"ip",value:String(s)},
+                        {name:"tentativas",value:`x${ac}`},
+                        {name:"horario",value:m()}
                     ]
                 }]
             })
         }
 
-        return j.status(429).end()
+        if(ac >= 30){
+
+            j.add(s)
+
+            await n(c,{
+                embeds:[{
+                    title:"ip banido",
+                    fields:[
+                        {name:"ip",value:String(s)},
+                        {name:"tentativas",value:`x${ac}`},
+                        {name:"motivo",value:"spam"},
+                        {name:"horario",value:m()}
+                    ]
+                }]
+            })
+        }
+
+        return r.status(429).end()
     }
 
-    c.set(k,l)
+    g.set(s,t)
 
-    if(i.headers["x-api-key"] !== b){
-        await g({
-            embeds:[{
-                title:"api key invalida",
-                fields:[
-                    {name:"ip",value:String(k)},
-                    {name:"horario",value:f()}
-                ]
-            }]
-        })
-        return j.status(401).end()
+    const ad = h.get(v)
+
+    if(ad && t - ad < 15000){
+        return r.status(429).end()
     }
 
-    const {username:n,userId:o,experience:p} = i.body || {}
-
-    if(!n || !o || !p){
-        await g({
-            embeds:[{
-                title:"body invalido",
-                fields:[
-                    {name:"ip",value:String(k)},
-                    {name:"horario",value:f()}
-                ]
-            }]
-        })
-        return j.status(400).end()
-    }
+    h.set(v,t)
 
     try{
 
-        const q = await fetch(`https://users.roblox.com/v1/users/${o}`)
-        const r = await q.json()
+        const ae = await fetch(`https://users.roblox.com/v1/users/${v}`)
+        const af = await ae.json()
 
-        if(!r.name || r.name.toLowerCase() !== n.toLowerCase()){
-            await g({
+        if(!af.name || af.name.toLowerCase() !== u.toLowerCase()){
+
+            await n(d,{
                 embeds:[{
-                    title:"username nao corresponde ao userid",
+                    title:"username mismatch",
                     fields:[
-                        {name:"username enviado",value:String(n)},
-                        {name:"userid enviado",value:String(o)},
-                        {name:"username real",value:String(r.name || "desconhecido")},
-                        {name:"ip",value:String(k)},
-                        {name:"horario",value:f()}
+                        {name:"username enviado",value:String(u)},
+                        {name:"username real",value:String(af.name || "desconhecido")},
+                        {name:"ip",value:String(s)},
+                        {name:"horario",value:m()}
                     ]
                 }]
             })
-            return j.status(403).end()
+
+            return r.status(403).end()
         }
 
-        await g({
+        await n(b,{
             embeds:[{
                 title:"execucao",
                 fields:[
-                    {name:"username",value:String(n),inline:true},
-                    {name:"userid",value:String(o),inline:true},
-                    {name:"experiencia",value:String(p),inline:true},
-                    {name:"ip",value:String(k)},
-                    {name:"horario",value:f()}
+                    {name:"username",value:String(u),inline:true},
+                    {name:"userid",value:String(v),inline:true},
+                    {name:"experiencia",value:String(w),inline:true},
+                    {name:"ip",value:String(s)},
+                    {name:"horario",value:m()}
                 ]
             }]
         })
 
-        j.status(200).json({success:true})
+        r.status(200).json({success:true})
 
     }catch{
 
-        await g({
+        await n(e,{
             embeds:[{
                 title:"erro interno",
                 fields:[
-                    {name:"ip",value:String(k)},
-                    {name:"horario",value:f()}
+                    {name:"ip",value:String(s)},
+                    {name:"horario",value:m()}
                 ]
             }]
         })
 
-        j.status(500).end()
+        r.status(500).end()
     }
 }
