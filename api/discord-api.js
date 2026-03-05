@@ -2,183 +2,186 @@ import crypto from "crypto"
 
 const a = process.env.discord_webhook
 const b = process.env.api_key
-const c = process.env.hmac_secret
 
+const c = new Map()
 const d = new Map()
 const e = new Map()
+const f = new Set()
 
-function f(g){
-    return crypto.createHmac("sha256", c).update(g).digest("hex")
-}
-
-function h(){
+function g(){
     return new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})
 }
 
-async function i(j){
+async function h(i){
     await fetch(a,{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(j)
+        body:JSON.stringify(i)
     })
 }
 
-export default async function handler(k,l){
+export default async function handler(j,k){
 
-    const m = k.headers["x-forwarded-for"] || k.socket.remoteAddress
-    const n = Date.now()
+    const l = j.headers["x-forwarded-for"] || j.socket.remoteAddress
+    const m = Date.now()
 
-    if(k.method !== "POST"){
-        await i({
+    if(f.has(l)){
+        return k.status(403).end()
+    }
+
+    if(j.method !== "POST"){
+        await h({
             embeds:[{
                 title:"requisicao invalida",
                 fields:[
                     {name:"motivo",value:"metodo invalido"},
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
-        return l.status(405).end()
+        return k.status(405).end()
     }
 
-    const o = d.get(m)
+    const n = c.get(l)
 
-    if(o && n - o < 5000){
-        await i({
+    if(n && m - n < 5000){
+        await h({
             embeds:[{
                 title:"rate limit",
                 fields:[
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
-        return l.status(429).end()
+
+        if(!e.has(l)) e.set(l,0)
+        e.set(l,e.get(l)+1)
+
+        if(e.get(l) > 5){
+            f.add(l)
+
+            await h({
+                embeds:[{
+                    title:"ip bloqueado",
+                    fields:[
+                        {name:"ip",value:String(l)},
+                        {name:"motivo",value:"spam"},
+                        {name:"horario",value:g()}
+                    ]
+                }]
+            })
+        }
+
+        return k.status(429).end()
     }
 
-    d.set(m,n)
+    c.set(l,m)
 
-    if(k.headers["x-api-key"] !== b){
-        await i({
+    if(j.headers["x-api-key"] !== b){
+        await h({
             embeds:[{
                 title:"api key invalida",
                 fields:[
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
-        return l.status(401).end()
+        return k.status(401).end()
     }
 
-    const p = k.headers["x-signature"]
-    const q = JSON.stringify(k.body)
-    const r = f(q)
+    const {username:o,userId:p,experience:q,token:r} = j.body || {}
 
-    if(p !== r){
-        await i({
-            embeds:[{
-                title:"assinatura invalida",
-                fields:[
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
-                ]
-            }]
-        })
-        return l.status(403).end()
-    }
-
-    const {username:s,userId:t,experience:u,token:v} = k.body || {}
-
-    if(!s || !t || !u){
-        await i({
+    if(!o || !p || !q){
+        await h({
             embeds:[{
                 title:"body invalido",
                 fields:[
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
-        return l.status(400).end()
+        return k.status(400).end()
     }
 
-    let w = e.get(m)
+    let s = d.get(l)
 
-    if(!w){
-        const x = crypto.randomBytes(32).toString("hex")
-        e.set(m,{token:x,criado:n})
-        return l.status(200).json({token:x})
+    if(!s){
+        const t = crypto.randomBytes(32).toString("hex")
+        d.set(l,{token:t,criado:m})
+        return k.status(200).json({token:t})
     }
 
-    if(w.token !== v){
-        await i({
+    if(s.token !== r){
+        await h({
             embeds:[{
                 title:"token invalido",
                 fields:[
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
-        return l.status(403).end()
+        return k.status(403).end()
     }
 
-    if(n - w.criado > 600000){
-        const y = crypto.randomBytes(32).toString("hex")
-        e.set(m,{token:y,criado:n})
-        return l.status(200).json({token:y})
+    if(m - s.criado > 600000){
+        const u = crypto.randomBytes(32).toString("hex")
+        d.set(l,{token:u,criado:m})
+        return k.status(200).json({token:u})
     }
 
     try{
 
-        const z = await fetch(`https://users.roblox.com/v1/users/${t}`)
-        const aa = await z.json()
+        const v = await fetch(`https://users.roblox.com/v1/users/${p}`)
+        const w = await v.json()
 
-        if(!aa.name || aa.name.toLowerCase() !== s.toLowerCase()){
-            await i({
+        if(!w.name || w.name.toLowerCase() !== o.toLowerCase()){
+            await h({
                 embeds:[{
                     title:"username nao corresponde ao userid",
                     fields:[
-                        {name:"username enviado",value:String(s)},
-                        {name:"userid enviado",value:String(t)},
-                        {name:"username real",value:String(aa.name || "desconhecido")},
-                        {name:"ip",value:String(m)},
-                        {name:"horario",value:h()}
+                        {name:"username enviado",value:String(o)},
+                        {name:"userid enviado",value:String(p)},
+                        {name:"username real",value:String(w.name || "desconhecido")},
+                        {name:"ip",value:String(l)},
+                        {name:"horario",value:g()}
                     ]
                 }]
             })
-            return l.status(403).end()
+            return k.status(403).end()
         }
 
-        await i({
+        await h({
             embeds:[{
                 title:"execucao",
                 fields:[
-                    {name:"username",value:String(s),inline:true},
-                    {name:"userid",value:String(t),inline:true},
-                    {name:"experiencia",value:String(u),inline:true},
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"username",value:String(o),inline:true},
+                    {name:"userid",value:String(p),inline:true},
+                    {name:"experiencia",value:String(q),inline:true},
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
 
-        l.status(200).json({success:true})
+        k.status(200).json({success:true})
 
     }catch{
 
-        await i({
+        await h({
             embeds:[{
                 title:"erro interno",
                 fields:[
-                    {name:"ip",value:String(m)},
-                    {name:"horario",value:h()}
+                    {name:"ip",value:String(l)},
+                    {name:"horario",value:g()}
                 ]
             }]
         })
 
-        l.status(500).end()
+        k.status(500).end()
     }
 }
