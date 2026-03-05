@@ -12,235 +12,250 @@ const g = new Map()
 const h = new Map()
 const i = new Map()
 const j = new Map()
+const k = new Map()
 
-function k(l){
-    return crypto.createHash("sha256").update(l).digest("hex")
+function l(m){
+    return crypto.createHash("sha256").update(m).digest("hex")
 }
 
-function m(){
+function n(){
     return new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})
 }
 
-async function n(o,p){
-    await fetch(o,{
+async function o(p,q,r){
+
+    const s = Date.now()
+
+    const t = k.get(r)
+
+    if(t && s - t < 5000){
+        return
+    }
+
+    k.set(r,s)
+
+    await fetch(p,{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(p)
+        body:JSON.stringify(q)
     })
 }
 
-export default async function handler(q,r){
+export default async function handler(req,res){
 
-    const s = q.headers["x-forwarded-for"] || q.socket.remoteAddress
-    const t = Date.now()
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress
+    const now = Date.now()
 
-    const u = q.headers["user-agent"] || "desconhecido"
+    const ua = req.headers["user-agent"] || "desconhecido"
+    const method = req.method
 
-    const v = q.method
+    const origin = ua.toLowerCase().includes("mozilla") ? "navegador" : "executor"
 
-    const w = u.toLowerCase().includes("mozilla") ? "navegador" : "executor"
+    if(j.has(ip)){
 
-    if(j.has(s)){
+        const expire = j.get(ip)
 
-        const aa = j.get(s)
-
-        if(t < aa){
-            return r.status(403).end()
+        if(now < expire){
+            return res.status(403).end()
         }
 
-        j.delete(s)
+        j.delete(ip)
     }
 
     const {
-        username:x,
-        userId:y,
-        experience:z,
-        timestamp:aa,
-        nonce:ab,
-        signature:ac
-    } = q.body || {}
+        username,
+        displayname,
+        userId,
+        experience,
+        executor,
+        timestamp,
+        nonce,
+        signature
+    } = req.body || {}
 
-    if(!x || !y || !z || !aa || !ab || !ac){
+    if(!username || !userId || !experience || !timestamp || !nonce || !signature){
 
-        await n(d,{
+        await o(d,{
             embeds:[{
                 title:"request invalido",
                 fields:[
-                    {name:"ip",value:String(s)},
-                    {name:"user agent",value:String(u)},
-                    {name:"tipo request",value:v},
-                    {name:"origem",value:w},
-                    {name:"horario",value:m()}
+                    {name:"ip",value:String(ip)},
+                    {name:"user agent",value:String(ua)},
+                    {name:"tipo request",value:method},
+                    {name:"origem",value:origin},
+                    {name:"horario",value:n()}
                 ]
             }]
-        })
+        },ip)
 
-        return r.status(400).end()
+        return res.status(400).end()
     }
 
-    if(Math.abs(t - aa) > 10000){
+    if(Math.abs(now - timestamp) > 10000){
 
-        await n(d,{
+        await o(d,{
             embeds:[{
                 title:"request expirado",
                 fields:[
-                    {name:"ip",value:String(s)},
-                    {name:"user agent",value:String(u)},
-                    {name:"tipo request",value:v},
-                    {name:"horario",value:m()}
+                    {name:"ip",value:String(ip)},
+                    {name:"user agent",value:String(ua)},
+                    {name:"tipo request",value:method},
+                    {name:"horario",value:n()}
                 ]
             }]
-        })
+        },ip)
 
-        return r.status(403).end()
+        return res.status(403).end()
     }
 
-    if(f.has(ab)){
+    if(f.has(nonce)){
 
-        await n(c,{
+        await o(c,{
             embeds:[{
                 title:"replay detectado",
                 fields:[
-                    {name:"nonce",value:String(ab)},
-                    {name:"ip",value:String(s)},
-                    {name:"horario",value:m()}
+                    {name:"nonce",value:String(nonce)},
+                    {name:"ip",value:String(ip)},
+                    {name:"horario",value:n()}
                 ]
             }]
-        })
+        },ip)
 
-        return r.status(403).end()
+        return res.status(403).end()
     }
 
-    f.set(ab,true)
+    f.set(nonce,true)
 
-    const ad = k(`${x}:${y}:${z}:${aa}:${ab}:${a}`)
+    const expected = l(`${username}:${userId}:${experience}:${executor}:${timestamp}:${nonce}:${a}`)
 
-    if(ad !== ac){
+    if(expected !== signature){
 
-        await n(d,{
+        await o(d,{
             embeds:[{
                 title:"assinatura invalida",
                 fields:[
-                    {name:"ip",value:String(s)},
-                    {name:"user agent",value:String(u)},
-                    {name:"tipo request",value:v},
-                    {name:"horario",value:m()}
+                    {name:"ip",value:String(ip)},
+                    {name:"user agent",value:String(ua)},
+                    {name:"tipo request",value:method},
+                    {name:"horario",value:n()}
                 ]
             }]
-        })
+        },ip)
 
-        return r.status(403).end()
+        return res.status(403).end()
     }
 
-    const ae = g.get(s)
+    const last = g.get(ip)
 
-    if(ae && t - ae < 3000){
+    if(last && now - last < 3000){
 
-        let af = i.get(s) || 0
-        af++
+        let attempts = i.get(ip) || 0
+        attempts++
 
-        i.set(s,af)
+        i.set(ip,attempts)
 
-        if(af % 10 === 0){
+        if(attempts % 10 === 0){
 
-            await n(c,{
+            await o(c,{
                 embeds:[{
                     title:"abuse detectado",
                     fields:[
-                        {name:"ip",value:String(s)},
-                        {name:"tentativas",value:`x${af}`},
-                        {name:"user agent",value:String(u)},
-                        {name:"horario",value:m()}
+                        {name:"ip",value:String(ip)},
+                        {name:"tentativas",value:`x${attempts}`},
+                        {name:"user agent",value:String(ua)},
+                        {name:"executor",value:String(executor || "desconhecido")},
+                        {name:"horario",value:n()}
                     ]
                 }]
-            })
+            },ip)
         }
 
-        if(af >= 30){
+        if(attempts >= 30){
 
-            j.set(s, t + 900000)
+            j.set(ip, now + 900000)
 
-            await n(c,{
+            await o(c,{
                 embeds:[{
                     title:"ip banido",
                     fields:[
-                        {name:"ip",value:String(s)},
-                        {name:"tentativas",value:`x${af}`},
+                        {name:"ip",value:String(ip)},
+                        {name:"tentativas",value:`x${attempts}`},
                         {name:"duracao",value:"15 minutos"},
-                        {name:"user agent",value:String(u)},
-                        {name:"horario",value:m()}
+                        {name:"user agent",value:String(ua)},
+                        {name:"executor",value:String(executor || "desconhecido")},
+                        {name:"horario",value:n()}
                     ]
                 }]
-            })
+            },ip)
         }
 
-        return r.status(429).end()
+        return res.status(429).end()
     }
 
-    g.set(s,t)
+    g.set(ip,now)
 
-    const ag = h.get(y)
+    const cooldown = h.get(userId)
 
-    if(ag && t - ag < 15000){
-        return r.status(429).end()
+    if(cooldown && now - cooldown < 15000){
+        return res.status(429).end()
     }
 
-    h.set(y,t)
+    h.set(userId,now)
 
     try{
 
-        const ah = await fetch(`https://users.roblox.com/v1/users/${y}`)
-        const ai = await ah.json()
+        const r = await fetch(`https://users.roblox.com/v1/users/${userId}`)
+        const data = await r.json()
 
-        if(!ai.name || ai.name.toLowerCase() !== x.toLowerCase()){
+        if(!data.name || data.name.toLowerCase() !== username.toLowerCase()){
 
-            await n(d,{
+            await o(d,{
                 embeds:[{
                     title:"username mismatch",
                     fields:[
-                        {name:"username enviado",value:String(x)},
-                        {name:"username real",value:String(ai.name || "desconhecido")},
-                        {name:"ip",value:String(s)},
-                        {name:"horario",value:m()}
+                        {name:"username enviado",value:String(username)},
+                        {name:"username real",value:String(data.name || "desconhecido")},
+                        {name:"ip",value:String(ip)},
+                        {name:"horario",value:n()}
                     ]
                 }]
-            })
+            },ip)
 
-            return r.status(403).end()
+            return res.status(403).end()
         }
 
-        await n(b,{
+        await o(b,{
             embeds:[{
                 title:"execucao",
                 fields:[
-                    {name:"username",value:String(ai.name),inline:true},
-                    {name:"displayName",value:String(ai.displayName),inline:true},
-                    {name:"userId",value:String(y),inline:true},
-                    {name:"experiencia",value:String(z)},
-                    {name:"executor",value:w},
-                    {name:"user agent",value:String(u)},
-                    {name:"ip",value:String(s)},
-                    {name:"tipo request",value:v},
-                    {name:"horario",value:m()}
+                    {name:"username",value:String(data.name),inline:true},
+                    {name:"displayName",value:String(data.displayName),inline:true},
+                    {name:"userId",value:String(userId),inline:true},
+                    {name:"experiencia",value:String(experience)},
+                    {name:"executor",value:String(executor || "desconhecido")},
+                    {name:"user agent",value:String(ua)},
+                    {name:"ip",value:String(ip)},
+                    {name:"tipo request",value:method},
+                    {name:"horario",value:n()}
                 ]
             }]
-        })
+        },ip)
 
-        r.status(200).json({success:true})
+        res.status(200).json({success:true})
 
     }catch{
 
-        await n(e,{
+        await o(e,{
             embeds:[{
                 title:"erro interno",
                 fields:[
-                    {name:"ip",value:String(s)},
-                    {name:"user agent",value:String(u)},
-                    {name:"horario",value:m()}
+                    {name:"ip",value:String(ip)},
+                    {name:"user agent",value:String(ua)},
+                    {name:"horario",value:n()}
                 ]
             }]
-        })
+        },ip)
 
-        r.status(500).end()
+        res.status(500).end()
     }
 }
