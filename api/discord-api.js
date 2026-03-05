@@ -1,66 +1,56 @@
 import crypto from "crypto"
 
-const a = process.env.api_secret
+const secret = process.env.api_secret
 
-const b = process.env.webhook_exec
-const c = process.env.webhook_abuse
-const d = process.env.webhook_invalid
-const e = process.env.webhook_error
+const webhook_exec = process.env.webhook_exec
+const webhook_abuse = process.env.webhook_abuse
+const webhook_invalid = process.env.webhook_invalid
+const webhook_error = process.env.webhook_error
 
-const f = new Map()
-const g = new Map()
-const h = new Map()
-const i = new Map()
-const j = new Map()
-const k = new Map()
+const nonce_cache = new Map()
+const ip_requests = new Map()
+const ip_attempts = new Map()
+const ip_bans = new Map()
+const webhook_limit = new Map()
 
-function l(m){
-    return crypto.createHash("sha256").update(m).digest("hex")
+function sha(v){
+    return crypto.createHash("sha256").update(v).digest("hex")
 }
 
-function n(){
+function time(){
     return new Date().toLocaleString("pt-BR",{timeZone:"America/Sao_Paulo"})
 }
 
-async function o(p,q,r){
+async function send(url,data,ip){
 
-    const s = Date.now()
+    const now = Date.now()
 
-    const t = k.get(r)
+    const last = webhook_limit.get(ip)
 
-    if(t && s - t < 5000){
-        return
-    }
+    if(last && now-last < 4000) return
 
-    k.set(r,s)
+    webhook_limit.set(ip,now)
 
-    await fetch(p,{
+    await fetch(url,{
         method:"POST",
         headers:{ "Content-Type":"application/json" },
-        body:JSON.stringify(q)
+        body:JSON.stringify(data)
     })
+}
+
+function origin(ua){
+    if(!ua) return "unknown"
+    return ua.toLowerCase().includes("mozilla") ? "browser" : "executor"
 }
 
 export default async function handler(req,res){
 
     const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress
+    const ua = req.headers["user-agent"] || "unknown"
+    const method = req.method
     const now = Date.now()
 
-    const ua = req.headers["user-agent"] || "desconhecido"
-    const method = req.method
-
-    const origin = ua.toLowerCase().includes("mozilla") ? "navegador" : "executor"
-
-    if(j.has(ip)){
-
-        const expire = j.get(ip)
-
-        if(now < expire){
-            return res.status(403).end()
-        }
-
-        j.delete(ip)
-    }
+    const body = req.body || {}
 
     const {
         username,
@@ -71,19 +61,77 @@ export default async function handler(req,res){
         timestamp,
         nonce,
         signature
-    } = req.body || {}
+    } = body
+
+    if(ip_bans.has(ip)){
+
+        const expire = ip_bans.get(ip)
+
+        if(now < expire) return res.status(403).end()
+
+        ip_bans.delete(ip)
+    }
+
+    let reqs = ip_requests.get(ip) || []
+    reqs = reqs.filter(v => now-v < 3000)
+
+    reqs.push(now)
+    ip_requests.set(ip,reqs)
+
+    if(reqs.length >= 3){
+
+        let attempts = ip_attempts.get(ip) || 0
+        attempts++
+        ip_attempts.set(ip,attempts)
+
+        await send(webhook_abuse,{
+            embeds:[{
+                title:"ABUSE DETECTADO",
+                fields:[
+                    {name:"ip",value:String(ip)},
+                    {name:"tentativas",value:`x${attempts}`},
+                    {name:"user agent",value:ua},
+                    {name:"executor",value:String(executor || "unknown")},
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
+                ]
+            }]
+        },ip)
+
+        if(attempts >= 10){
+
+            ip_bans.set(ip, now + 900000)
+
+            await send(webhook_abuse,{
+                embeds:[{
+                    title:"IP BANIDO",
+                    fields:[
+                        {name:"ip",value:String(ip)},
+                        {name:"tentativas",value:`x${attempts}`},
+                        {name:"duracao",value:"15 minutos"},
+                        {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                        {name:"horario",value:time()}
+                    ]
+                }]
+            },ip)
+        }
+
+        return res.status(429).end()
+    }
 
     if(!username || !userId || !experience || !timestamp || !nonce || !signature){
 
-        await o(d,{
+        await send(webhook_invalid,{
             embeds:[{
-                title:"request invalido",
+                title:"REQUEST INVALIDO",
                 fields:[
+                    {name:"motivo",value:"missing fields"},
                     {name:"ip",value:String(ip)},
-                    {name:"user agent",value:String(ua)},
+                    {name:"user agent",value:ua},
+                    {name:"origem",value:origin(ua)},
                     {name:"tipo request",value:method},
-                    {name:"origem",value:origin},
-                    {name:"horario",value:n()}
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
                 ]
             }]
         },ip)
@@ -93,14 +141,14 @@ export default async function handler(req,res){
 
     if(Math.abs(now - timestamp) > 10000){
 
-        await o(d,{
+        await send(webhook_invalid,{
             embeds:[{
-                title:"request expirado",
+                title:"REQUEST EXPIRADO",
                 fields:[
+                    {name:"motivo",value:"timestamp expired"},
                     {name:"ip",value:String(ip)},
-                    {name:"user agent",value:String(ua)},
-                    {name:"tipo request",value:method},
-                    {name:"horario",value:n()}
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
                 ]
             }]
         },ip)
@@ -108,15 +156,16 @@ export default async function handler(req,res){
         return res.status(403).end()
     }
 
-    if(f.has(nonce)){
+    if(nonce_cache.has(nonce)){
 
-        await o(c,{
+        await send(webhook_abuse,{
             embeds:[{
-                title:"replay detectado",
+                title:"REPLAY DETECTADO",
                 fields:[
                     {name:"nonce",value:String(nonce)},
                     {name:"ip",value:String(ip)},
-                    {name:"horario",value:n()}
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
                 ]
             }]
         },ip)
@@ -124,83 +173,27 @@ export default async function handler(req,res){
         return res.status(403).end()
     }
 
-    f.set(nonce,true)
+    nonce_cache.set(nonce,true)
 
-    const expected = l(`${username}:${userId}:${experience}:${executor}:${timestamp}:${nonce}:${a}`)
+    const expected = sha(`${username}:${userId}:${experience}:${executor}:${timestamp}:${nonce}:${secret}`)
 
     if(expected !== signature){
 
-        await o(d,{
+        await send(webhook_invalid,{
             embeds:[{
-                title:"assinatura invalida",
+                title:"ASSINATURA INVALIDA",
                 fields:[
                     {name:"ip",value:String(ip)},
-                    {name:"user agent",value:String(ua)},
-                    {name:"tipo request",value:method},
-                    {name:"horario",value:n()}
+                    {name:"user agent",value:ua},
+                    {name:"executor",value:String(executor || "unknown")},
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
                 ]
             }]
         },ip)
 
         return res.status(403).end()
     }
-
-    const last = g.get(ip)
-
-    if(last && now - last < 3000){
-
-        let attempts = i.get(ip) || 0
-        attempts++
-
-        i.set(ip,attempts)
-
-        if(attempts % 10 === 0){
-
-            await o(c,{
-                embeds:[{
-                    title:"abuse detectado",
-                    fields:[
-                        {name:"ip",value:String(ip)},
-                        {name:"tentativas",value:`x${attempts}`},
-                        {name:"user agent",value:String(ua)},
-                        {name:"executor",value:String(executor || "desconhecido")},
-                        {name:"horario",value:n()}
-                    ]
-                }]
-            },ip)
-        }
-
-        if(attempts >= 30){
-
-            j.set(ip, now + 900000)
-
-            await o(c,{
-                embeds:[{
-                    title:"ip banido",
-                    fields:[
-                        {name:"ip",value:String(ip)},
-                        {name:"tentativas",value:`x${attempts}`},
-                        {name:"duracao",value:"15 minutos"},
-                        {name:"user agent",value:String(ua)},
-                        {name:"executor",value:String(executor || "desconhecido")},
-                        {name:"horario",value:n()}
-                    ]
-                }]
-            },ip)
-        }
-
-        return res.status(429).end()
-    }
-
-    g.set(ip,now)
-
-    const cooldown = h.get(userId)
-
-    if(cooldown && now - cooldown < 15000){
-        return res.status(429).end()
-    }
-
-    h.set(userId,now)
 
     try{
 
@@ -209,14 +202,14 @@ export default async function handler(req,res){
 
         if(!data.name || data.name.toLowerCase() !== username.toLowerCase()){
 
-            await o(d,{
+            await send(webhook_invalid,{
                 embeds:[{
-                    title:"username mismatch",
+                    title:"USERNAME MISMATCH",
                     fields:[
                         {name:"username enviado",value:String(username)},
-                        {name:"username real",value:String(data.name || "desconhecido")},
-                        {name:"ip",value:String(ip)},
-                        {name:"horario",value:n()}
+                        {name:"username real",value:String(data.name || "unknown")},
+                        {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                        {name:"horario",value:time()}
                     ]
                 }]
             },ip)
@@ -224,19 +217,19 @@ export default async function handler(req,res){
             return res.status(403).end()
         }
 
-        await o(b,{
+        await send(webhook_exec,{
             embeds:[{
-                title:"execucao",
+                title:"EXECUCAO",
                 fields:[
                     {name:"username",value:String(data.name),inline:true},
                     {name:"displayName",value:String(data.displayName),inline:true},
                     {name:"userId",value:String(userId),inline:true},
-                    {name:"experiencia",value:String(experience)},
-                    {name:"executor",value:String(executor || "desconhecido")},
-                    {name:"user agent",value:String(ua)},
+                    {name:"executor",value:String(executor)},
                     {name:"ip",value:String(ip)},
+                    {name:"user agent",value:ua},
                     {name:"tipo request",value:method},
-                    {name:"horario",value:n()}
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
                 ]
             }]
         },ip)
@@ -245,13 +238,13 @@ export default async function handler(req,res){
 
     }catch{
 
-        await o(e,{
+        await send(webhook_error,{
             embeds:[{
-                title:"erro interno",
+                title:"ERRO INTERNO",
                 fields:[
                     {name:"ip",value:String(ip)},
-                    {name:"user agent",value:String(ua)},
-                    {name:"horario",value:n()}
+                    {name:"body",value:"```json\n"+JSON.stringify(body,null,2)+"\n```"},
+                    {name:"horario",value:time()}
                 ]
             }]
         },ip)
